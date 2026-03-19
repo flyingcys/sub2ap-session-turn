@@ -660,6 +660,7 @@ idempotency:
   # Observe-only 模式：
   # true: 观察期，不带 Idempotency-Key 仍放行（但会记录）
   # false: 强制期，不带 Idempotency-Key 直接拒绝（仅对接入幂等保护的接口生效）
+  # 如需对接支付回调、兑换码发放等外部系统，建议在确认调用方都带 Key 后切换为 false。
   observe_only: true
   # 关键写接口幂等记录 TTL（秒）
   default_ttl_seconds: 86400

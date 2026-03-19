@@ -1,10 +1,15 @@
 package conversationarchive
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/tidwall/gjson"
 )
@@ -20,6 +25,8 @@ type ResolvedSession struct {
 	Source        string
 	DirectoryName string
 }
+
+var legacyMetadataUserIDPattern = regexp.MustCompile(`_session_([a-fA-F0-9-]{36})$`)
 
 func ResolveSession(input SessionInput) ResolvedSession {
 	candidates := []struct {
@@ -45,7 +52,7 @@ func ResolveSession(input SessionInput) ResolvedSession {
 			value  string
 			source string
 		}{
-			value:  strings.TrimSpace(gjson.GetBytes(input.Body, "metadata.user_id").String()),
+			value:  resolveMetadataUserIDSession(input.Body),
 			source: "body.metadata.user_id",
 		})
 	}
@@ -61,13 +68,10 @@ func ResolveSession(input SessionInput) ResolvedSession {
 		}
 	}
 
-	fallback := strings.TrimSpace(input.Path) + "\n" + string(input.Body)
-	if fallback == "\n" {
-		fallback = "empty-request"
-	}
+	fallback := temporarySessionKey()
 	return ResolvedSession{
 		RawKey:        fallback,
-		Source:        "fallback.request_hash",
+		Source:        "fallback.request_temp",
 		DirectoryName: sessionDirectoryName(fallback),
 	}
 }
@@ -92,4 +96,35 @@ func getHeader(headers http.Header, key string) string {
 		}
 	}
 	return ""
+}
+
+func resolveMetadataUserIDSession(body []byte) string {
+	raw := strings.TrimSpace(gjson.GetBytes(body, "metadata.user_id").String())
+	if raw == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(raw, "{") {
+		var payload struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil && strings.TrimSpace(payload.SessionID) != "" {
+			return strings.TrimSpace(payload.SessionID)
+		}
+	}
+
+	if matches := legacyMetadataUserIDPattern.FindStringSubmatch(raw); len(matches) == 2 && strings.TrimSpace(matches[1]) != "" {
+		return strings.TrimSpace(matches[1])
+	}
+
+	return raw
+}
+
+func temporarySessionKey() string {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err == nil {
+		return "temp-request-" + hex.EncodeToString(random[:])
+	}
+
+	return fmt.Sprintf("temp-request-%d", time.Now().UnixNano())
 }

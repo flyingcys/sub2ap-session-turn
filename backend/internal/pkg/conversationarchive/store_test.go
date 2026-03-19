@@ -107,3 +107,19 @@ func TestAllocateNextTurnConcurrent(t *testing.T) {
 	sort.Ints(numbers)
 	require.Equal(t, []int{1, 2, 3, 4}, numbers)
 }
+
+func TestAllocateNextTurnReservesAcrossStoreInstances(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	firstStore := NewStore(root)
+	secondStore := NewStore(root)
+
+	firstTurn, err := firstStore.AllocateTurn(context.Background(), "sess_shared")
+	require.NoError(t, err)
+	require.Equal(t, 1, firstTurn)
+
+	secondTurn, err := secondStore.AllocateTurn(context.Background(), "sess_shared")
+	require.NoError(t, err)
+	require.Equal(t, 2, secondTurn)
+}

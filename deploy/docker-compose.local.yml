@@ -114,6 +114,8 @@ services:
       # Common values: Asia/Shanghai, America/New_York, Europe/London, UTC
       # =======================================================================
       - TZ=${TZ:-Asia/Shanghai}
+      # 会话归档目录；默认落到 /app/data 下，便于随容器卷持久化
+      - SUB2API_CONVERSATION_ARCHIVE_ROOT=${SUB2API_CONVERSATION_ARCHIVE_ROOT:-/app/data/archive/conversations}
 
       # =======================================================================
       # Gemini OAuth Configuration (for Gemini accounts)

@@ -40,6 +40,7 @@ services:
       - JWT_SECRET=${JWT_SECRET:-}
       - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
       - TZ=${TZ:-Asia/Shanghai}
+      - SUB2API_CONVERSATION_ARCHIVE_ROOT=${SUB2API_CONVERSATION_ARCHIVE_ROOT:-/app/data/archive/conversations}
     depends_on:
       postgres:
         condition: service_healthy

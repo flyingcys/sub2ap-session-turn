@@ -3,19 +3,18 @@ package conversationarchive
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
+
+	"github.com/google/uuid"
 )
 
 type Store struct {
 	root string
-	mu   sync.Mutex
-	lock map[string]*sync.Mutex
 }
 
 type HTTPMessage struct {
@@ -27,43 +26,45 @@ type HTTPMessage struct {
 type TurnRecord struct {
 	SessionDir string
 	Turn       int
+	Filename   string
 	Request    HTTPMessage
 	Response   HTTPMessage
 }
 
 func NewStore(root string) *Store {
-	return &Store{
-		root: root,
-		lock: make(map[string]*sync.Mutex),
-	}
+	return &Store{root: root}
 }
 
-func (s *Store) AllocateTurn(_ context.Context, sessionDir string) (int, error) {
-	sessionLock := s.sessionLock(sessionDir)
-	sessionLock.Lock()
-	defer sessionLock.Unlock()
-
+func (s *Store) AllocateTurn(ctx context.Context, sessionDir string) (int, error) {
 	dir := filepath.Join(s.root, sessionDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
 
-	matches, err := filepath.Glob(filepath.Join(dir, "*.txt"))
-	if err != nil {
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+
+		nextTurn, err := nextTurnNumber(dir)
+		if err != nil {
+			return 0, err
+		}
+
+		reservationPath := filepath.Join(dir, reservationFilename(nextTurn))
+		file, err := os.OpenFile(reservationPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			if closeErr := file.Close(); closeErr != nil {
+				_ = os.Remove(reservationPath)
+				return 0, closeErr
+			}
+			return nextTurn, nil
+		}
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
 		return 0, err
 	}
-	if len(matches) == 0 {
-		return 1, nil
-	}
-
-	sort.Strings(matches)
-	last := filepath.Base(matches[len(matches)-1])
-	turnText := strings.TrimSuffix(last, filepath.Ext(last))
-	turn, err := strconv.Atoi(turnText)
-	if err != nil {
-		return 0, fmt.Errorf("parse turn from %q: %w", last, err)
-	}
-	return turn + 1, nil
 }
 
 func (s *Store) WriteTurn(_ context.Context, record TurnRecord) (string, error) {
@@ -72,10 +73,21 @@ func (s *Store) WriteTurn(_ context.Context, record TurnRecord) (string, error) 
 		return "", err
 	}
 
-	filename := fmt.Sprintf("%04d.txt", record.Turn)
+	filename := record.Filename
+	if filename == "" {
+		filename = turnFilename(record.Turn)
+	}
 	path := filepath.Join(dir, filename)
-	if err := os.WriteFile(path, renderTurnRecord(record), 0o644); err != nil {
+	tempPath := filepath.Join(dir, "."+filename+"."+uuid.NewString()+".tmp")
+	if err := os.WriteFile(tempPath, renderTurnRecord(record), 0o644); err != nil {
 		return "", err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	if record.Turn > 0 {
+		_ = os.Remove(filepath.Join(dir, reservationFilename(record.Turn)))
 	}
 	return path, nil
 }
@@ -105,15 +117,50 @@ func renderTurnRecord(record TurnRecord) []byte {
 	return buffer.Bytes()
 }
 
-func (s *Store) sessionLock(sessionDir string) *sync.Mutex {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if lock, ok := s.lock[sessionDir]; ok {
-		return lock
+func nextTurnNumber(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
 	}
 
-	lock := &sync.Mutex{}
-	s.lock[sessionDir] = lock
-	return lock
+	maxTurn := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		baseName, ok := strings.CutSuffix(name, ".txt")
+		if !ok {
+			baseName, ok = strings.CutSuffix(name, ".pending")
+			if !ok {
+				continue
+			}
+		}
+
+		turn, err := strconv.Atoi(baseName)
+		if err != nil {
+			continue
+		}
+		if turn > maxTurn {
+			maxTurn = turn
+		}
+	}
+
+	return maxTurn + 1, nil
+}
+
+func reservationFilename(turn int) string {
+	return fmt.Sprintf("%04d.pending", turn)
+}
+
+func turnFilename(turn int) string {
+	if turn > 0 {
+		return fmt.Sprintf("%04d.txt", turn)
+	}
+	return fallbackTurnFilename()
+}
+
+func fallbackTurnFilename() string {
+	return "fallback-" + uuid.NewString() + ".txt"
 }

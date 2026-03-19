@@ -3,6 +3,7 @@ package conversationarchive
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 )
@@ -19,6 +20,7 @@ type Recorder struct {
 	store      *Store
 	sessionDir string
 	turn       int
+	filename   string
 	request    HTTPMessage
 }
 
@@ -33,14 +35,21 @@ func NewRecorder(ctx context.Context, store *Store, input RequestInput) (*Record
 		Body:    input.Body,
 	})
 	turn, err := store.AllocateTurn(ctx, resolved.DirectoryName)
+	filename := ""
 	if err != nil {
-		return nil, err
+		filename = fallbackTurnFilename()
+		slog.Warn("conversation archive turn allocation failed, falling back to random filename",
+			"session_dir", resolved.DirectoryName,
+			"fallback_filename", filename,
+			"error", err,
+		)
 	}
 
 	return &Recorder{
 		store:      store,
 		sessionDir: resolved.DirectoryName,
 		turn:       turn,
+		filename:   filename,
 		request: HTTPMessage{
 			StartLine: fmt.Sprintf("%s %s %s", input.Method, input.Path, input.Proto),
 			Headers:   flattenHeaders(input.Headers),
@@ -67,6 +76,7 @@ func (r *Recorder) Finish(ctx context.Context, writer *CaptureWriter) error {
 	_, err := r.store.WriteTurn(ctx, TurnRecord{
 		SessionDir: r.sessionDir,
 		Turn:       r.turn,
+		Filename:   r.filename,
 		Request:    r.request,
 		Response:   response,
 	})

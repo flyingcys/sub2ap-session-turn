@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"os"
 	"strings"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const defaultConversationArchiveRoot = "archive/conversations"
+const defaultConversationArchiveRoot = "data/archive/conversations"
 
 func beginConversationArchive(c *gin.Context, body []byte) (*conversationarchive.Recorder, *conversationarchive.CaptureWriter) {
 	if c == nil || c.Request == nil || c.Writer == nil {
@@ -31,6 +32,10 @@ func beginConversationArchive(c *gin.Context, body []byte) (*conversationarchive
 		Body:    body,
 	})
 	if err != nil {
+		slog.Warn("conversation archive initialization failed",
+			"path", c.Request.URL.Path,
+			"error", err,
+		)
 		return nil, captureWriter
 	}
 	return recorder, captureWriter
@@ -40,5 +45,10 @@ func finishConversationArchive(c *gin.Context, recorder *conversationarchive.Rec
 	if c == nil || recorder == nil || writer == nil {
 		return
 	}
-	_ = recorder.Finish(c.Request.Context(), writer)
+	if err := recorder.Finish(c.Request.Context(), writer); err != nil {
+		slog.Warn("conversation archive write failed",
+			"path", c.Request.URL.Path,
+			"error", err,
+		)
+	}
 }

@@ -127,6 +127,10 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/2026-03-18-sub2api-对话归档最终方案.md
+!docs/2026-03-18-sub2api-对话归档实施计划.md
+!docs/2026-03-18-sub2api-对话归档实施说明.md
+!docs/2026-03-19-sub2api-会话归档部署说明.md
 !docs/superpowers/
 docs/superpowers/*
 !docs/superpowers/specs/

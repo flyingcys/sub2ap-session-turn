@@ -48,7 +48,20 @@
 幂等语义：
 - 同 `code` 且 `used_by` 一致：`200`
 - 同 `code` 但 `used_by` 不一致：`409`
-- 缺少 `Idempotency-Key`：`400`（`IDEMPOTENCY_KEY_REQUIRED`）
+- 默认部署下 `idempotency.observe_only=true`，缺少 `Idempotency-Key` 仍会放行，但不会获得幂等保护
+- 建议支付生产环境将 `idempotency.observe_only` 设为 `false`
+- 当 `idempotency.observe_only=false` 时，缺少 `Idempotency-Key`：`400`（`IDEMPOTENCY_KEY_REQUIRED`）
+
+生产配置建议：
+
+```yaml
+idempotency:
+  observe_only: false
+```
+
+注意：
+- 这是全局幂等开关，不只影响支付接口
+- 切到强制模式前，请先确认所有已接入的写接口调用方都会携带 `Idempotency-Key`
 
 curl 示例：
 ```bash
@@ -168,7 +181,20 @@ Request body:
 Idempotency behavior:
 - Same `code` and same `used_by`: `200`
 - Same `code` but different `used_by`: `409`
-- Missing `Idempotency-Key`: `400` (`IDEMPOTENCY_KEY_REQUIRED`)
+- With the default deployment setting `idempotency.observe_only=true`, requests without `Idempotency-Key` are still accepted but are not protected by idempotency
+- For payment production traffic, set `idempotency.observe_only=false`
+- When `idempotency.observe_only=false`, missing `Idempotency-Key` returns `400` (`IDEMPOTENCY_KEY_REQUIRED`)
+
+Recommended production config:
+
+```yaml
+idempotency:
+  observe_only: false
+```
+
+Notes:
+- This is a global idempotency switch, not a payment-only toggle
+- Before enforcing it, make sure every integrated write caller already sends an `Idempotency-Key`
 
 curl example:
 ```bash
