@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/conversationarchive"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -72,9 +73,16 @@ func NewOpenAIGatewayHandler(
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// 局部兜底：确保该 handler 内部任何 panic 都不会击穿到进程级。
 	streamStarted := false
-	defer h.recoverResponsesPanic(c, &streamStarted)
 	compactStartedAt := time.Now()
 	defer h.logOpenAIRemoteCompactOutcome(c, compactStartedAt)
+	var archiveRecorder *conversationarchive.Recorder
+	var archiveWriter *conversationarchive.CaptureWriter
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			h.handleRecoveredResponsesPanic(c, &streamStarted, recovered)
+		}
+		finishConversationArchive(c, archiveRecorder, archiveWriter)
+	}()
 	setOpenAIClientTransportHTTP(c)
 
 	requestStart := time.Now()
@@ -118,8 +126,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
-	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
-	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
+	archiveRecorder, archiveWriter = beginConversationArchive(c, body)
 
 	setOpsRequestContext(c, "", false, body)
 	sessionHashBody := body
@@ -474,7 +481,14 @@ func (h *OpenAIGatewayHandler) logOpenAIRemoteCompactOutcome(c *gin.Context, sta
 // POST /v1/messages (when group platform is OpenAI)
 func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	streamStarted := false
-	defer h.recoverAnthropicMessagesPanic(c, &streamStarted)
+	var archiveRecorder *conversationarchive.Recorder
+	var archiveWriter *conversationarchive.CaptureWriter
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			h.handleRecoveredAnthropicMessagesPanic(c, &streamStarted, recovered)
+		}
+		finishConversationArchive(c, archiveRecorder, archiveWriter)
+	}()
 
 	requestStart := time.Now()
 
@@ -522,8 +536,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
-	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
+	archiveRecorder, archiveWriter = beginConversationArchive(c, body)
 
 	if !gjson.ValidBytes(body) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
@@ -1282,12 +1295,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	reqLog.Info("openai.websocket_ingress_closed", zap.Int64("account_id", account.ID))
 }
 
-func (h *OpenAIGatewayHandler) recoverResponsesPanic(c *gin.Context, streamStarted *bool) {
-	recovered := recover()
-	if recovered == nil {
-		return
-	}
-
+func (h *OpenAIGatewayHandler) handleRecoveredResponsesPanic(c *gin.Context, streamStarted *bool, recovered any) {
 	started := false
 	if streamStarted != nil {
 		started = *streamStarted
@@ -1301,14 +1309,17 @@ func (h *OpenAIGatewayHandler) recoverResponsesPanic(c *gin.Context, streamStart
 	)
 }
 
-// recoverAnthropicMessagesPanic recovers from panics in the Anthropic Messages
-// handler and returns an Anthropic-formatted error response.
-func (h *OpenAIGatewayHandler) recoverAnthropicMessagesPanic(c *gin.Context, streamStarted *bool) {
+func (h *OpenAIGatewayHandler) recoverResponsesPanic(c *gin.Context, streamStarted *bool) {
 	recovered := recover()
 	if recovered == nil {
 		return
 	}
+	h.handleRecoveredResponsesPanic(c, streamStarted, recovered)
+}
 
+// recoverAnthropicMessagesPanic recovers from panics in the Anthropic Messages
+// handler and returns an Anthropic-formatted error response.
+func (h *OpenAIGatewayHandler) handleRecoveredAnthropicMessagesPanic(c *gin.Context, streamStarted *bool, recovered any) {
 	started := streamStarted != nil && *streamStarted
 	requestLogger(c, "handler.openai_gateway.messages").Error(
 		"openai.messages_panic_recovered",
@@ -1319,6 +1330,14 @@ func (h *OpenAIGatewayHandler) recoverAnthropicMessagesPanic(c *gin.Context, str
 	if !started {
 		h.anthropicErrorResponse(c, http.StatusInternalServerError, "api_error", "Internal server error")
 	}
+}
+
+func (h *OpenAIGatewayHandler) recoverAnthropicMessagesPanic(c *gin.Context, streamStarted *bool) {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	h.handleRecoveredAnthropicMessagesPanic(c, streamStarted, recovered)
 }
 
 func (h *OpenAIGatewayHandler) ensureResponsesDependencies(c *gin.Context, reqLog *zap.Logger) bool {

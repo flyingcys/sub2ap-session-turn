@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -16,12 +17,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/conversationarchive"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	pkgresponse "github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -110,6 +113,16 @@ func NewGatewayHandler(
 // Messages handles Claude API compatible messages endpoint
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
+	streamStarted := false
+	var archiveRecorder *conversationarchive.Recorder
+	var archiveWriter *conversationarchive.CaptureWriter
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			h.handleRecoveredMessagesPanic(c, &streamStarted, recovered)
+		}
+		finishConversationArchive(c, archiveRecorder, archiveWriter)
+	}()
+
 	// 从context获取apiKey和user（ApiKeyAuth中间件已设置）
 	apiKey, ok := middleware2.GetAPIKeyFromContext(c)
 	if !ok {
@@ -147,8 +160,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
-	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
-	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
+	archiveRecorder, archiveWriter = beginConversationArchive(c, body)
 
 	setOpsRequestContext(c, "", false, body)
 
@@ -187,9 +199,6 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
 		return
 	}
-
-	// Track if we've started streaming (for error handling)
-	streamStarted := false
 
 	// 绑定错误透传服务，允许 service 层在非 failover 错误场景复用规则。
 	if h.errorPassthroughService != nil {
@@ -1671,6 +1680,22 @@ func (h *GatewayHandler) metadataBridgeEnabled() bool {
 		return true
 	}
 	return h.cfg.Gateway.OpenAIWS.MetadataBridgeEnabled
+}
+
+func (h *GatewayHandler) handleRecoveredMessagesPanic(c *gin.Context, streamStarted *bool, recovered any) {
+	started := streamStarted != nil && *streamStarted
+	written := c != nil && c.Writer != nil && c.Writer.Written()
+	requestLogger(c, "handler.gateway.messages").Error(
+		"gateway.messages_panic_recovered",
+		zap.Bool("stream_started", started),
+		zap.Bool("response_written", written),
+		zap.Any("panic", recovered),
+		zap.ByteString("stack", debug.Stack()),
+	)
+	if started || written {
+		return
+	}
+	pkgresponse.ErrorWithDetails(c, http.StatusInternalServerError, pkgerrors.UnknownMessage, pkgerrors.UnknownReason, nil)
 }
 
 func (h *GatewayHandler) maybeLogCompatibilityFallbackMetrics(reqLog *zap.Logger) {

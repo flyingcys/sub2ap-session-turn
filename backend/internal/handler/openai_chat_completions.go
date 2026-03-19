@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/conversationarchive"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -20,7 +21,14 @@ import (
 // POST /v1/chat/completions
 func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	streamStarted := false
-	defer h.recoverResponsesPanic(c, &streamStarted)
+	var archiveRecorder *conversationarchive.Recorder
+	var archiveWriter *conversationarchive.CaptureWriter
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			h.handleRecoveredResponsesPanic(c, &streamStarted, recovered)
+		}
+		finishConversationArchive(c, archiveRecorder, archiveWriter)
+	}()
 
 	requestStart := time.Now()
 
@@ -61,8 +69,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
-	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
-	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
+	archiveRecorder, archiveWriter = beginConversationArchive(c, body)
 
 	if !gjson.ValidBytes(body) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
