@@ -147,6 +147,9 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		return
 	}
 
+	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
+	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
+
 	setOpsRequestContext(c, "", false, body)
 
 	parsedReq, err := service.ParseGatewayRequest(body, domain.PlatformAnthropic)

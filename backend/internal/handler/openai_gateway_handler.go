@@ -118,6 +118,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
+	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
+
 	setOpsRequestContext(c, "", false, body)
 	sessionHashBody := body
 	if service.IsOpenAIResponsesCompactPathForTest(c) {
@@ -518,6 +521,9 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Request body is empty")
 		return
 	}
+
+	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
+	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
 
 	if !gjson.ValidBytes(body) {
 		h.anthropicErrorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
