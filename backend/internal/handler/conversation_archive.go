@@ -15,6 +15,9 @@ func beginConversationArchive(c *gin.Context, body []byte) (*conversationarchive
 	if c == nil || c.Request == nil || c.Writer == nil {
 		return nil, nil
 	}
+	if !shouldArchiveConversationPath(c.Request.URL.Path) {
+		return nil, nil
+	}
 
 	captureWriter := conversationarchive.WrapWriter(c.Writer)
 	c.Writer = captureWriter
@@ -39,6 +42,22 @@ func beginConversationArchive(c *gin.Context, body []byte) (*conversationarchive
 		return nil, captureWriter
 	}
 	return recorder, captureWriter
+}
+
+func shouldArchiveConversationPath(path string) bool {
+	normalizedPath := strings.TrimRight(strings.TrimSpace(path), "/")
+	switch {
+	case normalizedPath == "/v1/messages":
+		return true
+	case normalizedPath == "/v1/chat/completions", normalizedPath == "/chat/completions":
+		return true
+	case normalizedPath == "/v1/responses", strings.HasPrefix(normalizedPath, "/v1/responses/"):
+		return true
+	case normalizedPath == "/responses", strings.HasPrefix(normalizedPath, "/responses/"):
+		return true
+	default:
+		return false
+	}
 }
 
 func finishConversationArchive(c *gin.Context, recorder *conversationarchive.Recorder, writer *conversationarchive.CaptureWriter) {

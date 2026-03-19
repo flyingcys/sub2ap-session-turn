@@ -80,6 +80,33 @@ func TestConversationArchiveHelpers_UseDataArchiveRootByDefault(t *testing.T) {
 	require.Len(t, files, 1)
 }
 
+func TestConversationArchiveHelpers_SkipUnsupportedAntigravityMessagesPath(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SUB2API_CONVERSATION_ARCHIVE_ROOT", root)
+
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/antigravity/v1/messages", nil)
+	ctx.Request.Header.Set("session_id", "sess-antigravity-should-skip")
+
+	body := []byte(`{"model":"claude-sonnet-4-5"}`)
+	archiveRecorder, captureWriter := beginConversationArchive(ctx, body)
+	require.Nil(t, archiveRecorder)
+	require.Nil(t, captureWriter)
+
+	ctx.Writer.Header().Set("Content-Type", "application/json")
+	ctx.Writer.WriteHeader(http.StatusOK)
+	_, err := ctx.Writer.Write([]byte(`{"ok":true}`))
+	require.NoError(t, err)
+
+	finishConversationArchive(ctx, archiveRecorder, captureWriter)
+
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	require.NoError(t, err)
+	require.Empty(t, files)
+}
+
 func TestConversationArchiveHelpers_PanicRecoveryArchivesRecoveredOpenAIResponse(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SUB2API_CONVERSATION_ARCHIVE_ROOT", root)
