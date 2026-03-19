@@ -682,6 +682,8 @@ ReadWritePaths=/opt/sub2api
 Environment=GIN_MODE=release
 Environment=SERVER_HOST=${SERVER_HOST}
 Environment=SERVER_PORT=${SERVER_PORT}
+# 会话归档目录；放在 /opt/sub2api/data 下，便于与运行数据一起管理
+Environment=SUB2API_CONVERSATION_ARCHIVE_ROOT=/opt/sub2api/data/archive/conversations
 
 [Install]
 WantedBy=multi-user.target

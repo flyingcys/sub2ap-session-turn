@@ -61,6 +61,9 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		return
 	}
 
+	archiveRecorder, archiveWriter := beginConversationArchive(c, body)
+	defer finishConversationArchive(c, archiveRecorder, archiveWriter)
+
 	if !gjson.ValidBytes(body) {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return
