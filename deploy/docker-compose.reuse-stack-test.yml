@@ -1,0 +1,60 @@
+# =============================================================================
+# Sub2API Docker Compose - Test Build Reusing Existing PostgreSQL/Redis
+# =============================================================================
+# Purpose:
+#   - Build the current workspace source code
+#   - Run it side-by-side with an existing Sub2API deployment
+#   - Reuse the existing PostgreSQL/Redis stack via external Docker network
+#
+# Usage:
+#   cd deploy
+#   docker compose -f docker-compose.reuse-stack-test.yml up -d --build
+# =============================================================================
+
+name: deploy-test
+
+services:
+  sub2api-test-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: sub2api:test-reuse-stack
+    container_name: ${TEST_CONTAINER_NAME:-sub2api-test}
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    ports:
+      - "${TEST_BIND_HOST:-0.0.0.0}:${TEST_SERVER_PORT:-8081}:8080"
+    volumes:
+      - sub2api_test_data:/app/data
+      - ${TEST_ARCHIVE_HOST_DIR:-/root/sub2api-test-data/archive/conversations}:/app/data/archive/conversations
+    env_file:
+      - .env
+      - .env.test
+    environment:
+      - AUTO_SETUP=true
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_MODE=${SERVER_MODE:-release}
+      - RUN_MODE=${RUN_MODE:-standard}
+      - DATABASE_SSLMODE=${DATABASE_SSLMODE:-disable}
+      - SUB2API_CONVERSATION_ARCHIVE_ROOT=${SUB2API_CONVERSATION_ARCHIVE_ROOT:-/app/data/archive/conversations}
+    networks:
+      - legacy-sub2api
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  sub2api_test_data:
+    driver: local
+
+networks:
+  legacy-sub2api:
+    external: true
+    name: ${EXTERNAL_DOCKER_NETWORK:-deploy_sub2api-network}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/conversationarchive"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
@@ -413,6 +414,22 @@ func releaseOpsCaptureWriter(w *opsCaptureWriter) {
 	opsCaptureWriterPool.Put(w)
 }
 
+func restoreOpsWrappedWriter(current gin.ResponseWriter, wrapped *opsCaptureWriter, original gin.ResponseWriter) gin.ResponseWriter {
+	switch writer := current.(type) {
+	case nil:
+		return original
+	case *opsCaptureWriter:
+		if writer == wrapped {
+			return original
+		}
+	case *conversationarchive.CaptureWriter:
+		if writer.ResponseWriter == wrapped {
+			writer.ResponseWriter = original
+		}
+	}
+	return current
+}
+
 func (w *opsCaptureWriter) Write(b []byte) (int, error) {
 	if w.Status() >= 400 && w.limit > 0 && w.buf.Len() < w.limit {
 		remaining := w.limit - w.buf.Len()
@@ -449,9 +466,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		defer func() {
 			// Restore the original writer before returning so outer middlewares
 			// don't observe a pooled wrapper that has been released.
-			if c.Writer == w {
-				c.Writer = originalWriter
-			}
+			c.Writer = restoreOpsWrappedWriter(c.Writer, w, originalWriter)
 			releaseOpsCaptureWriter(w)
 		}()
 		c.Writer = w

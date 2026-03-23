@@ -3,6 +3,8 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -213,6 +215,46 @@ func TestOpsErrorLoggerMiddleware_DoesNotBreakOuterMiddlewares(t *testing.T) {
 		r.ServeHTTP(rec, req)
 	})
 	require.Equal(t, http.StatusNoContent, rec.Code)
+}
+
+func TestOpsErrorLoggerMiddleware_DoesNotPanicWithConversationArchiveWrapper(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	root := t.TempDir()
+	t.Setenv("SUB2API_CONVERSATION_ARCHIVE_ROOT", root)
+
+	r := gin.New()
+	r.Use(middleware2.Recovery())
+	r.Use(middleware2.RequestLogger())
+	r.Use(middleware2.Logger())
+	r.POST("/responses", OpsErrorLoggerMiddleware(nil), func(c *gin.Context) {
+		body := []byte(`{"model":"gpt-5.3-codex","stream":true}`)
+		archiveRecorder, captureWriter := beginConversationArchive(c, body)
+		defer finishConversationArchive(c, archiveRecorder, captureWriter)
+
+		c.Writer.Header().Set("Content-Type", "text/event-stream")
+		c.Status(http.StatusOK)
+		_, err := c.Writer.Write([]byte("event: response.completed\ndata: {}\n\n"))
+		require.NoError(t, err)
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/responses", nil)
+	req.Header.Set("session_id", "sess-ops-archive")
+
+	require.NotPanics(t, func() {
+		r.ServeHTTP(rec, req)
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+
+	content, err := os.ReadFile(files[0])
+	require.NoError(t, err)
+	require.Contains(t, string(content), "POST /responses HTTP/1.1")
+	require.Contains(t, string(content), "event: response.completed")
 }
 
 func TestIsKnownOpsErrorType(t *testing.T) {
