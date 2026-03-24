@@ -32,14 +32,7 @@ type ArchivedTurn struct {
 
 type ArchivedResponseBody struct {
 	JSON      any                `json:"json,omitempty"`
-	Events    []ArchivedSSEEvent `json:"events,omitempty"`
 	Completed map[string]any     `json:"completed,omitempty"`
-}
-
-type ArchivedSSEEvent struct {
-	Seq   int    `json:"seq"`
-	Event string `json:"event,omitempty"`
-	Data  any    `json:"data,omitempty"`
 }
 
 type HTTPMessage struct {
@@ -155,7 +148,6 @@ func buildArchivedResponse(message HTTPMessage) (ArchivedResponseBody, string, a
 
 func parseSSEBody(body string) (ArchivedResponseBody, string, any, any) {
 	blocks := strings.Split(body, "\n\n")
-	events := make([]ArchivedSSEEvent, 0, len(blocks))
 
 	var (
 		completed    map[string]any
@@ -170,13 +162,8 @@ func parseSSEBody(body string) (ArchivedResponseBody, string, any, any) {
 			continue
 		}
 
-		event, data := parseSSEBlock(block)
+		_, data := parseSSEBlock(block)
 		parsedData := parseBodyValue(data)
-		events = append(events, ArchivedSSEEvent{
-			Seq:   len(events) + 1,
-			Event: event,
-			Data:  parsedData,
-		})
 
 		payload, ok := parsedData.(map[string]any)
 		if !ok {
@@ -207,7 +194,6 @@ func parseSSEBody(body string) (ArchivedResponseBody, string, any, any) {
 	}
 
 	return ArchivedResponseBody{
-		Events:    events,
 		Completed: completed,
 	}, responseText, usage, outputItems
 }

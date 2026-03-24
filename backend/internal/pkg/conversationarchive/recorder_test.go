@@ -44,11 +44,11 @@ func TestRecorderFinishWritesTurnFileFromCapturedResponse(t *testing.T) {
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
+	require.NotContains(t, string(content), `"seq"`)
+	require.NotContains(t, string(content), `"events"`)
 
 	var archived ArchivedTurn
 	require.NoError(t, json.Unmarshal(content, &archived))
 	require.Equal(t, map[string]any{"input": "hello"}, archived.RequestBody)
-	require.Len(t, archived.ResponseBody.Events, 1)
-	require.Equal(t, "done", archived.ResponseBody.Events[0].Event)
-	require.Equal(t, map[string]any{}, archived.ResponseBody.Events[0].Data)
+	require.Nil(t, archived.ResponseBody.Completed)
 }

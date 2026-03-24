@@ -43,19 +43,14 @@ func TestConversationArchiveHelpers_PersistTurnFile(t *testing.T) {
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
+	require.NotContains(t, string(content), `"seq"`)
+	require.NotContains(t, string(content), `"events"`)
+
 	var archived struct {
-		RequestBody  map[string]any `json:"request_body"`
-		ResponseBody struct {
-			Events []struct {
-				Event string `json:"event"`
-				Data  any    `json:"data"`
-			} `json:"events"`
-		} `json:"response_body"`
+		RequestBody map[string]any `json:"request_body"`
 	}
 	require.NoError(t, json.Unmarshal(content, &archived))
 	require.Equal(t, map[string]any{"input": "hello"}, archived.RequestBody)
-	require.Len(t, archived.ResponseBody.Events, 1)
-	require.Equal(t, "done", archived.ResponseBody.Events[0].Event)
 }
 
 func TestConversationArchiveHelpers_UseDataArchiveRootByDefault(t *testing.T) {

@@ -65,12 +65,6 @@ func TestWriteTurnFileCreatesExpectedFormat(t *testing.T) {
 	var archived ArchivedTurn
 	require.NoError(t, json.Unmarshal(content, &archived))
 	require.Equal(t, map[string]any{"input": "hello"}, archived.RequestBody)
-	require.Len(t, archived.ResponseBody.Events, 1)
-	require.Equal(t, ArchivedSSEEvent{
-		Seq:   1,
-		Event: "done",
-		Data:  map[string]any{},
-	}, archived.ResponseBody.Events[0])
 	require.Nil(t, archived.ResponseBody.Completed)
 	require.Empty(t, archived.ResponseText)
 	require.Nil(t, archived.Usage)
@@ -115,7 +109,7 @@ func TestWriteTurnFileExtractsCompletedResponseMetadata(t *testing.T) {
 	require.Len(t, items, 2)
 
 	require.NotNil(t, archived.ResponseBody.Completed)
-	require.Len(t, archived.ResponseBody.Events, 2)
+	require.Empty(t, archived.ResponseBody.JSON)
 }
 
 func TestAllocateNextTurnConcurrent(t *testing.T) {

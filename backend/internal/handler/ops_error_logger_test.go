@@ -254,19 +254,18 @@ func TestOpsErrorLoggerMiddleware_DoesNotPanicWithConversationArchiveWrapper(t *
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
+	require.NotContains(t, string(content), `"seq"`)
+	require.NotContains(t, string(content), `"events"`)
+
 	var archived struct {
 		RequestBody  map[string]any `json:"request_body"`
 		ResponseBody struct {
-			Events []struct {
-				Event string `json:"event"`
-				Data  any    `json:"data"`
-			} `json:"events"`
+			Completed map[string]any `json:"completed"`
 		} `json:"response_body"`
 	}
 	require.NoError(t, json.Unmarshal(content, &archived))
 	require.Equal(t, map[string]any{"model": "gpt-5.3-codex", "stream": true}, archived.RequestBody)
-	require.Len(t, archived.ResponseBody.Events, 1)
-	require.Equal(t, "response.completed", archived.ResponseBody.Events[0].Event)
+	require.Nil(t, archived.ResponseBody.Completed)
 }
 
 func TestIsKnownOpsErrorType(t *testing.T) {
