@@ -53,7 +53,7 @@ func NewRecorder(ctx context.Context, store *Store, input RequestInput) (*Record
 		request: HTTPMessage{
 			StartLine: fmt.Sprintf("%s %s %s", input.Method, input.Path, input.Proto),
 			Headers:   flattenHeaders(input.Headers),
-			Body:      append([]byte(nil), input.Body...),
+			Body:      string(input.Body),
 		},
 	}, nil
 }
@@ -70,7 +70,7 @@ func (r *Recorder) Finish(ctx context.Context, writer *CaptureWriter) error {
 	response := HTTPMessage{
 		StartLine: fmt.Sprintf("HTTP/1.1 %d %s", statusCode, http.StatusText(statusCode)),
 		Headers:   flattenHeaders(writer.Header()),
-		Body:      append([]byte(nil), writer.BodyBytes()...),
+		Body:      string(writer.BodyBytes()),
 	}
 
 	_, err := r.store.WriteTurn(ctx, TurnRecord{
@@ -83,7 +83,7 @@ func (r *Recorder) Finish(ctx context.Context, writer *CaptureWriter) error {
 	return err
 }
 
-func flattenHeaders(headers http.Header) [][2]string {
+func flattenHeaders(headers http.Header) []Header {
 	if headers == nil {
 		return nil
 	}
@@ -94,10 +94,10 @@ func flattenHeaders(headers http.Header) [][2]string {
 	}
 	sort.Strings(keys)
 
-	result := make([][2]string, 0, len(keys))
+	result := make([]Header, 0, len(keys))
 	for _, key := range keys {
 		for _, value := range headers.Values(key) {
-			result = append(result, [2]string{key, value})
+			result = append(result, Header{Name: key, Value: value})
 		}
 	}
 	return result

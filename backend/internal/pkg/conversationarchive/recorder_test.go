@@ -2,6 +2,7 @@ package conversationarchive
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,15 +38,17 @@ func TestRecorderFinishWritesTurnFileFromCapturedResponse(t *testing.T) {
 	err = recorder.Finish(context.Background(), writer)
 	require.NoError(t, err)
 
-	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
-	text := string(content)
-	require.Contains(t, text, "POST /responses HTTP/1.1")
-	require.Contains(t, text, `{"input":"hello"}`)
-	require.Contains(t, text, "HTTP/1.1 200 OK")
-	require.Contains(t, text, "event: done")
+
+	var archived ArchivedTurn
+	require.NoError(t, json.Unmarshal(content, &archived))
+	require.Equal(t, map[string]any{"input": "hello"}, archived.RequestBody)
+	require.Len(t, archived.ResponseBody.Events, 1)
+	require.Equal(t, "done", archived.ResponseBody.Events[0].Event)
+	require.Equal(t, map[string]any{}, archived.ResponseBody.Events[0].Data)
 }

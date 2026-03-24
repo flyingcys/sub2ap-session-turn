@@ -1,8 +1,8 @@
 package conversationarchive
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,10 +17,35 @@ type Store struct {
 	root string
 }
 
+type Header struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type ArchivedTurn struct {
+	RequestBody  any                  `json:"request_body,omitempty"`
+	ResponseBody ArchivedResponseBody `json:"response_body,omitempty"`
+	ResponseText string               `json:"response_text,omitempty"`
+	Usage        any                  `json:"usage,omitempty"`
+	OutputItems  any                  `json:"output_items,omitempty"`
+}
+
+type ArchivedResponseBody struct {
+	JSON      any                `json:"json,omitempty"`
+	Events    []ArchivedSSEEvent `json:"events,omitempty"`
+	Completed map[string]any     `json:"completed,omitempty"`
+}
+
+type ArchivedSSEEvent struct {
+	Seq   int    `json:"seq"`
+	Event string `json:"event,omitempty"`
+	Data  any    `json:"data,omitempty"`
+}
+
 type HTTPMessage struct {
-	StartLine string
-	Headers   [][2]string
-	Body      []byte
+	StartLine string   `json:"start_line,omitempty"`
+	Headers   []Header `json:"headers,omitempty"`
+	Body      string   `json:"body,omitempty"`
 }
 
 type TurnRecord struct {
@@ -79,7 +104,11 @@ func (s *Store) WriteTurn(_ context.Context, record TurnRecord) (string, error) 
 	}
 	path := filepath.Join(dir, filename)
 	tempPath := filepath.Join(dir, "."+filename+"."+uuid.NewString()+".tmp")
-	if err := os.WriteFile(tempPath, renderTurnRecord(record), 0o644); err != nil {
+	content, err := renderTurnRecord(record)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(tempPath, content, 0o644); err != nil {
 		return "", err
 	}
 	if err := os.Rename(tempPath, path); err != nil {
@@ -92,29 +121,172 @@ func (s *Store) WriteTurn(_ context.Context, record TurnRecord) (string, error) 
 	return path, nil
 }
 
-func renderTurnRecord(record TurnRecord) []byte {
-	var buffer bytes.Buffer
-	writeSection := func(title string, message HTTPMessage) {
-		buffer.WriteString(title)
-		buffer.WriteByte('\n')
-		if message.StartLine != "" {
-			buffer.WriteString(message.StartLine)
-			buffer.WriteByte('\n')
-		}
-		for _, header := range message.Headers {
-			buffer.WriteString(header[0])
-			buffer.WriteString(": ")
-			buffer.WriteString(header[1])
-			buffer.WriteByte('\n')
-		}
-		buffer.WriteByte('\n')
-		buffer.Write(message.Body)
-		buffer.WriteString("\n\n")
+func renderTurnRecord(record TurnRecord) ([]byte, error) {
+	payload := buildArchivedTurn(record)
+	content, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(content, '\n'), nil
+}
+
+func buildArchivedTurn(record TurnRecord) ArchivedTurn {
+	responseBody, responseText, usage, outputItems := buildArchivedResponse(record.Response)
+
+	return ArchivedTurn{
+		RequestBody:  parseBodyValue(record.Request.Body),
+		ResponseBody: responseBody,
+		ResponseText: responseText,
+		Usage:        usage,
+		OutputItems:  outputItems,
+	}
+}
+
+func buildArchivedResponse(message HTTPMessage) (ArchivedResponseBody, string, any, any) {
+	contentType := strings.ToLower(headerValue(message.Headers, "content-type"))
+	if strings.Contains(contentType, "text/event-stream") {
+		return parseSSEBody(message.Body)
 	}
 
-	writeSection("===== REQUEST =====", record.Request)
-	writeSection("===== RESPONSE =====", record.Response)
-	return buffer.Bytes()
+	return ArchivedResponseBody{
+		JSON: parseBodyValue(message.Body),
+	}, "", nil, nil
+}
+
+func parseSSEBody(body string) (ArchivedResponseBody, string, any, any) {
+	blocks := strings.Split(body, "\n\n")
+	events := make([]ArchivedSSEEvent, 0, len(blocks))
+
+	var (
+		completed    map[string]any
+		responseText string
+		usage        any
+		outputItems  any
+	)
+
+	for _, block := range blocks {
+		block = strings.TrimSpace(block)
+		if block == "" {
+			continue
+		}
+
+		event, data := parseSSEBlock(block)
+		parsedData := parseBodyValue(data)
+		events = append(events, ArchivedSSEEvent{
+			Seq:   len(events) + 1,
+			Event: event,
+			Data:  parsedData,
+		})
+
+		payload, ok := parsedData.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if responseText == "" && payload["type"] == "response.output_text.done" {
+			if text, ok := payload["text"].(string); ok {
+				responseText = text
+			}
+		}
+
+		if payload["type"] != "response.completed" {
+			continue
+		}
+
+		response, ok := payload["response"].(map[string]any)
+		if !ok {
+			continue
+		}
+
+		completed = response
+		usage = response["usage"]
+		outputItems = response["output"]
+		if text := extractResponseText(outputItems); text != "" {
+			responseText = text
+		}
+	}
+
+	return ArchivedResponseBody{
+		Events:    events,
+		Completed: completed,
+	}, responseText, usage, outputItems
+}
+
+func parseSSEBlock(block string) (string, string) {
+	var (
+		event     string
+		dataLines []string
+	)
+
+	for _, line := range strings.Split(block, "\n") {
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			event = strings.TrimSpace(strings.TrimPrefix(line, "event: "))
+		case strings.HasPrefix(line, "data: "):
+			dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+		}
+	}
+
+	return event, strings.Join(dataLines, "\n")
+}
+
+func parseBodyValue(body string) any {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return nil
+	}
+
+	var value any
+	if err := json.Unmarshal([]byte(trimmed), &value); err == nil {
+		return value
+	}
+	return body
+}
+
+func extractResponseText(outputItems any) string {
+	items, ok := outputItems.([]any)
+	if !ok {
+		return ""
+	}
+
+	texts := make([]string, 0, len(items))
+	for _, item := range items {
+		payload, ok := item.(map[string]any)
+		if !ok || payload["type"] != "message" {
+			continue
+		}
+
+		contentItems, ok := payload["content"].([]any)
+		if !ok {
+			continue
+		}
+
+		var parts []string
+		for _, content := range contentItems {
+			part, ok := content.(map[string]any)
+			if !ok || part["type"] != "output_text" {
+				continue
+			}
+			text, _ := part["text"].(string)
+			if text != "" {
+				parts = append(parts, text)
+			}
+		}
+		if len(parts) > 0 {
+			texts = append(texts, strings.Join(parts, ""))
+		}
+	}
+
+	return strings.Join(texts, "\n\n")
+}
+
+func headerValue(headers []Header, name string) string {
+	for _, header := range headers {
+		if strings.EqualFold(header.Name, name) {
+			return header.Value
+		}
+	}
+	return ""
 }
 
 func nextTurnNumber(dir string) (int, error) {
@@ -130,12 +302,9 @@ func nextTurnNumber(dir string) (int, error) {
 		}
 
 		name := entry.Name()
-		baseName, ok := strings.CutSuffix(name, ".txt")
+		baseName, ok := cutTurnFileSuffix(name)
 		if !ok {
-			baseName, ok = strings.CutSuffix(name, ".pending")
-			if !ok {
-				continue
-			}
+			continue
 		}
 
 		turn, err := strconv.Atoi(baseName)
@@ -156,11 +325,20 @@ func reservationFilename(turn int) string {
 
 func turnFilename(turn int) string {
 	if turn > 0 {
-		return fmt.Sprintf("%04d.txt", turn)
+		return fmt.Sprintf("%04d.json", turn)
 	}
 	return fallbackTurnFilename()
 }
 
 func fallbackTurnFilename() string {
-	return "fallback-" + uuid.NewString() + ".txt"
+	return "fallback-" + uuid.NewString() + ".json"
+}
+
+func cutTurnFileSuffix(name string) (string, bool) {
+	for _, suffix := range []string{".json", ".txt", ".pending"} {
+		if baseName, ok := strings.CutSuffix(name, suffix); ok {
+			return baseName, true
+		}
+	}
+	return "", false
 }

@@ -2,6 +2,7 @@ package conversationarchive
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,30 +43,79 @@ func TestWriteTurnFileCreatesExpectedFormat(t *testing.T) {
 		Turn:       1,
 		Request: HTTPMessage{
 			StartLine: "POST /responses HTTP/1.1",
-			Headers: [][2]string{
-				{"content-type", "application/json"},
+			Headers: []Header{
+				{Name: "content-type", Value: "application/json"},
 			},
-			Body: []byte(`{"input":"hello"}`),
+			Body: `{"input":"hello"}`,
 		},
 		Response: HTTPMessage{
 			StartLine: "HTTP/1.1 200 OK",
-			Headers: [][2]string{
-				{"content-type", "text/event-stream"},
+			Headers: []Header{
+				{Name: "content-type", Value: "text/event-stream"},
 			},
-			Body: []byte("event: done\ndata: {}\n\n"),
+			Body: "event: done\ndata: {}\n\n",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(root, "sess_abc", "0001.json"), path)
+
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	var archived ArchivedTurn
+	require.NoError(t, json.Unmarshal(content, &archived))
+	require.Equal(t, map[string]any{"input": "hello"}, archived.RequestBody)
+	require.Len(t, archived.ResponseBody.Events, 1)
+	require.Equal(t, ArchivedSSEEvent{
+		Seq:   1,
+		Event: "done",
+		Data:  map[string]any{},
+	}, archived.ResponseBody.Events[0])
+	require.Nil(t, archived.ResponseBody.Completed)
+	require.Empty(t, archived.ResponseText)
+	require.Nil(t, archived.Usage)
+	require.Nil(t, archived.OutputItems)
+}
+
+func TestWriteTurnFileExtractsCompletedResponseMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := NewStore(root)
+
+	path, err := store.WriteTurn(context.Background(), TurnRecord{
+		SessionDir: "sess_meta",
+		Turn:       1,
+		Request: HTTPMessage{
+			Headers: []Header{
+				{Name: "content-type", Value: "application/json"},
+			},
+			Body: `{"input":"hi"}`,
+		},
+		Response: HTTPMessage{
+			Headers: []Header{
+				{Name: "content-type", Value: "text/event-stream"},
+			},
+			Body: "event: response.output_text.done\ndata: {\"type\":\"response.output_text.done\",\"text\":\"Hi.\"}\n\n" +
+				"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"reasoning\",\"encrypted_content\":\"abc\"},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hi.\"}]}],\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n",
 		},
 	})
 	require.NoError(t, err)
 
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
-	text := string(content)
-	require.Contains(t, text, "===== REQUEST =====")
-	require.Contains(t, text, "POST /responses HTTP/1.1")
-	require.Contains(t, text, `{"input":"hello"}`)
-	require.Contains(t, text, "===== RESPONSE =====")
-	require.Contains(t, text, "HTTP/1.1 200 OK")
-	require.Contains(t, text, "event: done")
+
+	var archived ArchivedTurn
+	require.NoError(t, json.Unmarshal(content, &archived))
+	require.Equal(t, "Hi.", archived.ResponseText)
+	require.Equal(t, map[string]any{"input_tokens": float64(1), "output_tokens": float64(2)}, archived.Usage)
+
+	items, ok := archived.OutputItems.([]any)
+	require.True(t, ok)
+	require.Len(t, items, 2)
+
+	require.NotNil(t, archived.ResponseBody.Completed)
+	require.Len(t, archived.ResponseBody.Events, 2)
 }
 
 func TestAllocateNextTurnConcurrent(t *testing.T) {
@@ -89,7 +139,7 @@ func TestAllocateNextTurnConcurrent(t *testing.T) {
 			defer wg.Done()
 			turn, err := store.AllocateTurn(ctx, "sess_concurrent")
 			if err == nil {
-				err = os.WriteFile(filepath.Join(root, "sess_concurrent", fmt.Sprintf("%04d.txt", turn)), []byte("reserved"), 0o644)
+				err = os.WriteFile(filepath.Join(root, "sess_concurrent", fmt.Sprintf("%04d.json", turn)), []byte("reserved"), 0o644)
 			}
 
 			mu.Lock()

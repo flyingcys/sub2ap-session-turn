@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -247,14 +248,25 @@ func TestOpsErrorLoggerMiddleware_DoesNotPanicWithConversationArchiveWrapper(t *
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
-	require.Contains(t, string(content), "POST /responses HTTP/1.1")
-	require.Contains(t, string(content), "event: response.completed")
+	var archived struct {
+		RequestBody  map[string]any `json:"request_body"`
+		ResponseBody struct {
+			Events []struct {
+				Event string `json:"event"`
+				Data  any    `json:"data"`
+			} `json:"events"`
+		} `json:"response_body"`
+	}
+	require.NoError(t, json.Unmarshal(content, &archived))
+	require.Equal(t, map[string]any{"model": "gpt-5.3-codex", "stream": true}, archived.RequestBody)
+	require.Len(t, archived.ResponseBody.Events, 1)
+	require.Equal(t, "response.completed", archived.ResponseBody.Events[0].Event)
 }
 
 func TestIsKnownOpsErrorType(t *testing.T) {

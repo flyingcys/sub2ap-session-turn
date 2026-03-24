@@ -37,14 +37,25 @@ func TestConversationArchiveHelpers_PersistTurnFile(t *testing.T) {
 
 	finishConversationArchive(ctx, archiveRecorder, captureWriter)
 
-	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
-	require.Contains(t, string(content), "POST /responses HTTP/1.1")
-	require.Contains(t, string(content), "event: done")
+	var archived struct {
+		RequestBody  map[string]any `json:"request_body"`
+		ResponseBody struct {
+			Events []struct {
+				Event string `json:"event"`
+				Data  any    `json:"data"`
+			} `json:"events"`
+		} `json:"response_body"`
+	}
+	require.NoError(t, json.Unmarshal(content, &archived))
+	require.Equal(t, map[string]any{"input": "hello"}, archived.RequestBody)
+	require.Len(t, archived.ResponseBody.Events, 1)
+	require.Equal(t, "done", archived.ResponseBody.Events[0].Event)
 }
 
 func TestConversationArchiveHelpers_UseDataArchiveRootByDefault(t *testing.T) {
@@ -75,7 +86,7 @@ func TestConversationArchiveHelpers_UseDataArchiveRootByDefault(t *testing.T) {
 
 	finishConversationArchive(ctx, archiveRecorder, captureWriter)
 
-	files, err := filepath.Glob(filepath.Join(workingDir, "data", "archive", "conversations", "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(workingDir, "data", "archive", "conversations", "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 }
@@ -102,7 +113,7 @@ func TestConversationArchiveHelpers_SkipUnsupportedAntigravityMessagesPath(t *te
 
 	finishConversationArchive(ctx, archiveRecorder, captureWriter)
 
-	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Empty(t, files)
 }
@@ -136,16 +147,22 @@ func TestConversationArchiveHelpers_PanicRecoveryArchivesRecoveredOpenAIResponse
 
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 
-	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
-	text := string(content)
-	require.Contains(t, text, "HTTP/1.1 502 Bad Gateway")
-	require.Contains(t, text, `"type":"upstream_error"`)
-	require.Contains(t, text, `"message":"Upstream request failed"`)
+	var archived struct {
+		ResponseBody struct {
+			JSON map[string]any `json:"json"`
+		} `json:"response_body"`
+	}
+	require.NoError(t, json.Unmarshal(content, &archived))
+	errorPayload, ok := archived.ResponseBody.JSON["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "upstream_error", errorPayload["type"])
+	require.Equal(t, "Upstream request failed", errorPayload["message"])
 }
 
 func TestConversationArchiveHelpers_PanicRecoveryArchivesRecoveredAnthropicResponse(t *testing.T) {
@@ -181,16 +198,22 @@ func TestConversationArchiveHelpers_PanicRecoveryArchivesRecoveredAnthropicRespo
 	err := json.Unmarshal(rec.Body.Bytes(), &parsed)
 	require.NoError(t, err)
 
-	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
-	text := string(content)
-	require.Contains(t, text, "HTTP/1.1 500 Internal Server Error")
-	require.Contains(t, text, `"type":"error"`)
-	require.Contains(t, text, `"message":"Internal server error"`)
+	var archived struct {
+		ResponseBody struct {
+			JSON map[string]any `json:"json"`
+		} `json:"response_body"`
+	}
+	require.NoError(t, json.Unmarshal(content, &archived))
+	errorPayload, ok := archived.ResponseBody.JSON["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "error", errorPayload["type"])
+	require.Equal(t, "Internal server error", errorPayload["message"])
 }
 
 func TestConversationArchiveHelpers_GatewayMessagesPanicArchivesRecoveryResponse(t *testing.T) {
@@ -240,13 +263,19 @@ func TestConversationArchiveHelpers_GatewayMessagesPanicArchivesRecoveryResponse
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	require.Contains(t, rec.Body.String(), `"message":"internal error"`)
 
-	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.txt"))
+	files, err := filepath.Glob(filepath.Join(root, "sess_*", "*.json"))
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
 	content, err := os.ReadFile(files[0])
 	require.NoError(t, err)
-	text := string(content)
-	require.Contains(t, text, "HTTP/1.1 500 Internal Server Error")
-	require.Contains(t, text, `"message":"internal error"`)
+	var archived struct {
+		ResponseBody struct {
+			JSON map[string]any `json:"json"`
+		} `json:"response_body"`
+	}
+	require.NoError(t, json.Unmarshal(content, &archived))
+	errorPayload, ok := archived.ResponseBody.JSON["error"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "internal error", errorPayload["message"])
 }
