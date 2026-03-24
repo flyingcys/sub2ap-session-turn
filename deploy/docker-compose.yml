@@ -11,13 +11,15 @@
 # No Setup Wizard needed - the system auto-initializes on first run.
 # =============================================================================
 
+name: flyingy-sub2api
+
 services:
   # ===========================================================================
   # Sub2API Application
   # ===========================================================================
   sub2api:
-    image: weishaw/sub2api:latest
-    container_name: sub2api
+    image: ${SUB2API_IMAGE:-flyingy-sub2api:latest}
+    container_name: flyingy-sub2api
     restart: unless-stopped
     ulimits:
       nofile:
@@ -27,7 +29,7 @@ services:
       - "${BIND_HOST:-0.0.0.0}:${SERVER_PORT:-8080}:8080"
     volumes:
       # Data persistence (config.yaml will be auto-generated here)
-      - sub2api_data:/app/data
+      - flyingy_sub2api_data:/app/data
       # Optional: Mount custom config.yaml (uncomment and create the file first)
       # Copy config.example.yaml to config.yaml, modify it, then uncomment:
       # - ./config.yaml:/app/data/config.yaml
@@ -146,7 +148,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - sub2api-network
+      - flyingy-sub2api-network
     healthcheck:
       test: ["CMD", "wget", "-q", "-T", "5", "-O", "/dev/null", "http://localhost:8080/health"]
       interval: 30s
@@ -159,14 +161,14 @@ services:
   # ===========================================================================
   postgres:
     image: postgres:18-alpine
-    container_name: sub2api-postgres
+    container_name: flyingy-sub2api-postgres
     restart: unless-stopped
     ulimits:
       nofile:
         soft: 100000
         hard: 100000
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - flyingy_sub2api_postgres_data:/var/lib/postgresql/data
     environment:
       # postgres:18-alpine 默认 PGDATA=/var/lib/postgresql/18/docker（位于镜像声明的匿名卷 /var/lib/postgresql 内）。
       # 若不显式设置 PGDATA，则即使挂载了 postgres_data 到 /var/lib/postgresql/data，数据也不会落盘到该命名卷，
@@ -177,7 +179,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-sub2api}
       - TZ=${TZ:-Asia/Shanghai}
     networks:
-      - sub2api-network
+      - flyingy-sub2api-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sub2api} -d ${POSTGRES_DB:-sub2api}"]
       interval: 10s
@@ -192,14 +194,14 @@ services:
   # ===========================================================================
   redis:
     image: redis:8-alpine
-    container_name: sub2api-redis
+    container_name: flyingy-sub2api-redis
     restart: unless-stopped
     ulimits:
       nofile:
         soft: 100000
         hard: 100000
     volumes:
-      - redis_data:/data
+      - flyingy_sub2api_redis_data:/data
     command: >
         sh -c '
           redis-server
@@ -212,7 +214,7 @@ services:
       # REDISCLI_AUTH is used by redis-cli for authentication (safer than -a flag)
       - REDISCLI_AUTH=${REDIS_PASSWORD:-}
     networks:
-      - sub2api-network
+      - flyingy-sub2api-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -224,16 +226,16 @@ services:
 # Volumes
 # =============================================================================
 volumes:
-  sub2api_data:
+  flyingy_sub2api_data:
     driver: local
-  postgres_data:
+  flyingy_sub2api_postgres_data:
     driver: local
-  redis_data:
+  flyingy_sub2api_redis_data:
     driver: local
 
 # =============================================================================
 # Networks
 # =============================================================================
 networks:
-  sub2api-network:
+  flyingy-sub2api-network:
     driver: bridge

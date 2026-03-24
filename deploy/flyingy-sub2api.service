@@ -1,0 +1,35 @@
+[Unit]
+Description=Flyingy-Sub2API - AI API Gateway Platform
+Documentation=https://github.com/Wei-Shaw/sub2api
+After=network.target postgresql.service redis.service
+Wants=postgresql.service redis.service
+
+[Service]
+Type=simple
+User=flyingy-sub2api
+Group=flyingy-sub2api
+WorkingDirectory=/opt/flyingy-sub2api
+ExecStart=/opt/flyingy-sub2api/sub2api
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=flyingy-sub2api
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/flyingy-sub2api
+
+# Environment - Server configuration
+# Modify these values to change listen address and port
+Environment=GIN_MODE=release
+Environment=SERVER_HOST=0.0.0.0
+Environment=SERVER_PORT=8080
+# 会话归档目录；放在 /opt/flyingy-sub2api/data 下，便于与运行数据一起管理
+Environment=SUB2API_CONVERSATION_ARCHIVE_ROOT=/opt/flyingy-sub2api/data/archive/conversations
+
+[Install]
+WantedBy=multi-user.target
